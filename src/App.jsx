@@ -7,7 +7,6 @@ import DashboardPage from './pages/DashboardPage';
 import GoalsPage from './pages/GoalsPage';
 import TimelinePage from './pages/TimelinePage';
 import AvatarPage from './pages/AvatarPage';
-import SocialPage from './pages/SocialPage';
 import MessagesPage from './pages/MessagesPage';
 import SettingsPage from './pages/SettingsPage';
 import AboutPage from './pages/AboutPage';
@@ -57,7 +56,6 @@ function App() {
             <Route path="/goals" element={<GoalsPage />} />
             <Route path="/timeline" element={<TimelinePage />} />
             <Route path="/avatar" element={<AvatarPage />} />
-            <Route path="/social" element={<SocialPage />} />
             <Route path="/messages" element={<MessagesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/about" element={<AboutPage />} />
