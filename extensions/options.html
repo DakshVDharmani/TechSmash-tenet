@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <body>
+    <h2>Nexora Options</h2>
+    <label>Supabase URL:  <input id="supUrl" style="width:60%"/></label><br/>
+    <label>Supabase Key:  <input id="supKey" style="width:60%"/></label><br/>
+    <button id="save">Save</button>
+    <script>
+      document.getElementById('save').addEventListener('click', () => {
+        const supUrl = document.getElementById('supUrl').value;
+        const supKey = document.getElementById('supKey').value;
+        chrome.storage.sync.set({ supabaseUrl: supUrl, supabaseKey: supKey }, () => {
+          alert('Saved');
+        });
+      });
+      chrome.storage.sync.get({ supabaseUrl: '', supabaseKey: '' }, (d) => {
+        document.getElementById('supUrl').value = d.supabaseUrl || '';
+        document.getElementById('supKey').value = d.supabaseKey || '';
+      });
+    </script>
+  </body>
+</html>

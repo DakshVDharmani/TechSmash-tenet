@@ -7,6 +7,7 @@ import {
   MessageSquare,
   UserCog,
   Settings,
+  Crown,
 } from "lucide-react";
 import { useLocation, Link, useNavigate } from "react-router-dom";
 import { useState, useRef, useEffect } from "react";
@@ -15,8 +16,8 @@ const Navigation = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const [hovered, setHovered] = useState(false); // hover over Connect
-  const [pinned, setPinned] = useState(false); // pinned by click
+  const [hovered, setHovered] = useState(false); // hover state
+  const [pinned, setPinned] = useState(false); // pinned state
   const [connectCenterY, setConnectCenterY] = useState(0);
   const connectRef = useRef(null);
 
@@ -37,9 +38,9 @@ const Navigation = () => {
 
   // Buttons on arc
   const connectOptions = [
-    { label: "Future", path: "/social/future", angleDeg: -90 },
-    { label: "Peers", path: "/social/peers", angleDeg: 0 },
-    { label: "Past", path: "/social/past", angleDeg: 90 },
+    { label: "FUT", path: "/social/future", angleDeg: -90 },
+    { label: "PRE", path: "/social/peers", angleDeg: 0 },
+    { label: "PAS", path: "/social/past", angleDeg: 90 },
   ];
 
   // Track connect button position
@@ -51,25 +52,37 @@ const Navigation = () => {
   }, []);
 
   // Semicircle visible rule
-  const showConnectMenu = hovered || pinned;
+  const showConnectMenu = (hovered || pinned) && connectCenterY > 0;
+
+  // ✅ Close Connect menu when navigation changes
+  useEffect(() => {
+    setHovered(false);
+    setPinned(false);
+  }, [location.pathname]);
 
   return (
     <motion.nav
-      className="fixed top-16 left-0 h-[calc(100vh-4rem)] w-20 bg-background border-r border-secondary/50 z-50 flex flex-col items-center py-8"
+      className="fixed top-16 left-0 h-[calc(100vh-4rem)] w-20 bg-background border-r border-secondary/50 z-50 flex flex-col items-center py-6"
       initial={{ x: -80 }}
       animate={{ x: 0 }}
       transition={{ type: "spring", stiffness: 100, damping: 20 }}
     >
-      {/* Logo */}
-      <Link
-        to="/dashboard"
-        className="mb-12 font-mono text-2xl font-bold text-primary tracking-widest"
-      >
-        N
-      </Link>
+      {/* Navigation Items (Supervisor at top) */}
+      <div className="flex flex-col space-y-6 flex-1 relative items-center">
+        {/* Supervisor Icon */}
+        <Link
+          to="/supervisor"
+          title="Supervisor"
+          className={`flex items-center justify-center w-12 h-12 transition-colors duration-200 ${
+            location.pathname.startsWith("/supervisor")
+              ? "text-highlight"
+              : "text-secondary hover:text-primary"
+          }`}
+        >
+          <Crown size={22} strokeWidth={1.5} />
+        </Link>
 
-      {/* Navigation Items */}
-      <div className="flex flex-col space-y-6 flex-1 relative">
+        {/* Other nav items */}
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = location.pathname.startsWith(item.path);
@@ -81,13 +94,18 @@ const Navigation = () => {
                 key="connect"
                 ref={connectRef}
                 className="relative"
-                onMouseEnter={() => setHovered(true)}
-                onMouseLeave={() => setHovered(false)}
+                onMouseEnter={() => !pinned && setHovered(true)}
+                onMouseLeave={() => !pinned && setHovered(false)}
               >
                 {/* Connect icon */}
                 <motion.div
                   title="Connect"
-                  onClick={() => setPinned((prev) => !prev)} // toggle pinned
+                  onClick={() => {
+                    // toggle pinned
+                    setPinned((prev) => !prev);
+                    // close hover if unpinning
+                    if (pinned) setHovered(false);
+                  }}
                   className={`w-12 h-12 flex items-center justify-center relative cursor-pointer transition-colors duration-200 ${
                     isActive || pinned
                       ? "text-highlight"
@@ -106,7 +124,7 @@ const Navigation = () => {
 
                 {/* Semicircle menu */}
                 <AnimatePresence>
-                  {showConnectMenu && connectCenterY > 0 && (
+                  {showConnectMenu && (
                     <motion.div
                       style={{
                         position: "fixed",
@@ -120,7 +138,11 @@ const Navigation = () => {
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.9 }}
-                      transition={{ type: "spring", stiffness: 220, damping: 20 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 220,
+                        damping: 20,
+                      }}
                     >
                       {/* Arc (semicircle) */}
                       <svg
@@ -128,7 +150,10 @@ const Navigation = () => {
                         height={D}
                         viewBox={`0 0 ${D} ${D}`}
                         className="block"
-                        style={{ overflow: "visible", pointerEvents: "none" }}
+                        style={{
+                          overflow: "visible",
+                          pointerEvents: "none",
+                        }}
                         aria-hidden
                       >
                         <path
@@ -166,7 +191,9 @@ const Navigation = () => {
                               key={opt.path}
                               onClick={() => {
                                 navigate(opt.path);
-                                if (!pinned) setShowConnectMenu(false);
+                                // Hide menu immediately after click
+                                setHovered(false);
+                                setPinned(false);
                               }}
                               initial={{ scale: 0.85, opacity: 0 }}
                               animate={{ scale: 1, opacity: 1 }}

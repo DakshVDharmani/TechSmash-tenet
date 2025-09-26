@@ -1,0 +1,63 @@
+/* Floating Nexora icon */
+#nexora-floating-icon {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+  z-index: 2147483647;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  font-weight: bold;
+  font-size: 18px;
+}
+
+/* Modal */
+#nexora-settings-modal {
+  position: fixed;
+  right: 72px;
+  bottom: 12px;
+  width: 320px;
+  height: 200px;
+  z-index: 2147483647;
+  background-color: white;
+  color: black;
+  border: 1px solid #ccc;
+  padding: 12px;
+  display: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+}
+
+#nexora-settings-modal button {
+  margin-top: 8px;
+  margin-right: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+/* Fullscreen overlay */
+#nexora-fullscreen-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  background: black;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#nexora-fullscreen-overlay video {
+  max-width: 100%;
+  max-height: 100%;
+}

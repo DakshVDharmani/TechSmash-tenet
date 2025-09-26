@@ -8,8 +8,10 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start:extension": "electron ./nexora-extension/electron.js",
-    "dev:extension": "cross-env NODE_ENV=development electron ./nexora-extension/electron.js"
+    "start:extension": "electron ./electron-main.js",
+    "dev:extension": "cross-env NODE_ENV=development electron ./electron-main.js",
+    "prepare:extension": "node scripts/copy-env.js",
+    "start": "node server.js"
   },
   "dependencies": {
     "@faker-js/faker": "^10.0.0",
@@ -17,14 +19,17 @@
     "active-win": "^8.0.0",
     "axios": "^1.9.0",
     "clsx": "^2.1.1",
+    "cors": "^2.8.5",
+    "crypto-js": "^4.2.0",
     "dotenv": "^16.4.5",
+    "electron": "^29.1.0",
+    "express": "^5.1.0",
     "framer-motion": "^12.23.12",
     "lucide-react": "^0.544.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.9.1",
-    "tailwind-merge": "^3.3.1",
-    "electron": "^29.1.0"
+    "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.27.0",
@@ -38,5 +43,10 @@
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "vite": "^6.3.5"
-  }
+  },
+  "description": "To run this project, follow these steps:",
+  "main": "electron-main.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }

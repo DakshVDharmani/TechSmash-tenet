@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Nexora Activity Monitor",
+  "version": "1.0.0",
+  "description": "Tracks activity, syncs with Supabase, blocks forbidden sites with video overlay, and shows a Nexora indicator.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_icon": {
+      "16": "assets/icon.jpg",
+      "48": "assets/icon.jpg",
+      "128": "assets/icon.jpg"
+    }
+  },
+  "icons": {
+    "16": "assets/icon.jpg",
+    "48": "assets/icon.jpg",
+    "128": "assets/icon.jpg"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["styles/content.css"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/default-video.mp4", "assets/icon.jpg", "env.json"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://*.nexora.com/*",
+      "http://localhost:5173/*"
+    ]
+  }
+}

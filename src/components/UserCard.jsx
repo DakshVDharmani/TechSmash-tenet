@@ -1,6 +1,5 @@
 import { User } from "lucide-react";
-import { motion } from "framer-motion";
-import GlassCard from "./GlassCard"; // ✅ use your GlassCard for consistent UI
+import GlassCard from "./GlassCard";
 
 const UserCard = ({ user, index }) => (
   <GlassCard
@@ -16,15 +15,19 @@ const UserCard = ({ user, index }) => (
       </div>
       <div>
         <h4 className="text-primary">{user.name}</h4>
-        <p className="text-xs text-secondary">{user.status.toUpperCase()}</p>
+        <p className="text-xs text-secondary">{user.role}</p>
       </div>
     </div>
-    <p className="text-xs text-secondary">CURRENT_GOAL: {user.goal}</p>
-    <p className="text-xs text-secondary">
-      ALIGNMENT_SCORE: {user.alignmentScore}%
-    </p>
-    <p className="text-xs text-secondary italic">STATUS_NOTE: {user.bio}</p>
-    <button className="text-xs text-highlight mt-4">[ CONNECT ]</button>
+    <p className="text-xs text-secondary">CURRENT_GOAL: {user.goal || "No active goal"}</p>
+    <p className="text-xs text-secondary">ALIGNMENT_SCORE: {user.alignmentScore ?? 0}%</p>
+    <p className="text-xs text-secondary italic">STATUS_NOTE: {user.statusNote || "No notes"}</p>
+    <button
+      className="text-xs text-highlight mt-4 border border-highlight px-2 py-1 rounded hover:bg-highlight hover:text-white transition"
+      onClick={user.onConnectClick}
+      disabled={user.requested}
+    >
+      {user.requested ? "[ REQUESTED ]" : "[ CONNECT ]"}
+    </button>
   </GlassCard>
 );
 
