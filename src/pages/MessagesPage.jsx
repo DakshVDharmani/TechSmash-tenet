@@ -15,14 +15,24 @@ const MessagesPage = ({ myId, newChat }) => {
   const isUserAtBottomRef = useRef(true);
   const prevMessagesLenRef = useRef(0);
   const prevSelectedChatIdRef = useRef(null);
+  const requestedChatIdRef = useRef(null);        // ✅ remember the chat that TopNavbar wants to open
+  const hasSelectedRequestedChatRef = useRef(false);
+
+
+// ✅ UNIVERSAL: run on mount AND whenever TopNavbar sends a new chat
+useEffect(() => {
+  if (newChat?.selectedChatId) {
+    requestedChatIdRef.current = newChat.selectedChatId;
+    hasSelectedRequestedChatRef.current = false;   // reset
+  }
+  fetchChats();
+}, [myId, newChat]);
+
 
   const scrollToBottom = (smooth = true) => {
     const el = messagesContainerRef.current;
     if (!el) return;
-    el.scrollTo({
-      top: el.scrollHeight,
-      behavior: smooth ? "smooth" : "auto",
-    });
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
     setNewMessagesCount(0);
     isUserAtBottomRef.current = true;
   };
@@ -31,59 +41,97 @@ const MessagesPage = ({ myId, newChat }) => {
     const el = messagesContainerRef.current;
     if (!el) return;
     const atBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 50; // within 50px
+      el.scrollHeight - el.scrollTop - el.clientHeight < 50;
     isUserAtBottomRef.current = atBottom;
     if (atBottom) setNewMessagesCount(0);
   };
 
-  // 1️⃣ Fetch chats
-  useEffect(() => {
-    const fetchChats = async () => {
-      if (!myId) return;
-
-      const { data: myParts } = await supabase
-        .from("chat_participants")
-        .select("chat_id, aes_key, chats (id, type, created_at)")
-        .eq("user_id", myId);
-
-      if (!myParts || myParts.length === 0) {
-        setChats([]);
-        setSelectedChat(null);
+  // ---- Fetch chats (can be called from realtime listener too) ----
+  const fetchChats = async () => {
+    if (!myId) return;
+  
+    const { data: myParts } = await supabase
+      .from("chat_participants")
+      .select("chat_id, aes_key, chats (id, type, created_at)")
+      .eq("user_id", myId);
+  
+    if (!myParts || myParts.length === 0) {
+      setChats([]);
+      setSelectedChat(null);
+      return;
+    }
+  
+    const chatIds = myParts.map((p) => p.chat_id);
+    const { data: otherParts } = await supabase
+      .from("chat_participants")
+      .select("chat_id, user_id, Profiles(id, fullname, operator_id)")
+      .in("chat_id", chatIds)
+      .neq("user_id", myId);
+  
+    const formatted = myParts.map((p) => {
+      const other = otherParts?.find((o) => o.chat_id === p.chat_id);
+      return {
+        chatId: p.chat_id,
+        participantName: other?.Profiles?.fullname || "Unknown",
+        operatorId: other?.Profiles?.operator_id || "",
+        aesKey: p.aes_key,
+        created_at: p.chats?.created_at,
+        type: p.chats?.type,
+      };
+    });
+  
+    setChats(formatted);
+  
+    // ✅ 1st priority: requested chat
+    if (requestedChatIdRef.current && !hasSelectedRequestedChatRef.current) {
+      const reqId = String(requestedChatIdRef.current);
+      const found = formatted.find(c => String(c.chatId) === reqId);
+      if (found) {
+        setSelectedChat(found);
+        hasSelectedRequestedChatRef.current = true;   // ✅ mark as handled
+        // ❗ do NOT clear requestedChatIdRef yet
         return;
       }
-
-      const chatIds = myParts.map((p) => p.chat_id);
-      const { data: otherParts } = await supabase
-        .from("chat_participants")
-        .select("chat_id, user_id, Profiles(id, fullname, operator_id)")
-        .in("chat_id", chatIds)
-        .neq("user_id", myId);
-
-      const formatted = myParts.map((p) => {
-        const other = otherParts?.find((o) => o.chat_id === p.chat_id);
-        return {
-          chatId: p.chat_id,
-          participantName: other?.Profiles?.fullname || "Unknown",
-          operatorId: other?.Profiles?.operator_id || "",
-          aesKey: p.aes_key,
-          created_at: p.chats?.created_at,
-          type: p.chats?.type,
-        };
-      });
-
-      setChats(formatted);
-      if (!selectedChat && formatted.length > 0) {
-        setSelectedChat(formatted[0]);
+    }
+    
+  
+    // ✅ 2nd: keep previous selection if it still exists
+    setSelectedChat(prev => {
+      if (prev && formatted.some(c => String(c.chatId) === String(prev.chatId))) {
+        return prev;
       }
-    };
+      return formatted[0] || null;
+    });
 
-    fetchChats();
-  }, [myId, newChat]);
+    if (hasSelectedRequestedChatRef.current) {
+      requestedChatIdRef.current = null;
+    }    
+  };
+  
 
-  // 2️⃣ Fetch messages
+  // ✅ realtime: refresh chat list whenever a participant row is inserted for me
+  useEffect(() => {
+    if (!myId) return;
+    const channel = supabase
+      .channel("chats:participants")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "chat_participants",
+          filter: `user_id=eq.${myId}`,
+        },
+        () => { fetchChats(); }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [myId]);
+
+  // ---- Fetch messages for the selected chat ----
   useEffect(() => {
     if (!selectedChat) return;
-
     prevSelectedChatIdRef.current = selectedChat.chatId;
 
     const fetchMessages = async () => {
@@ -96,11 +144,8 @@ const MessagesPage = ({ myId, newChat }) => {
       const decrypted = (data || []).map((m) => ({
         ...m,
         content: (() => {
-          try {
-            return decryptMessage(m.content, selectedChat.aesKey);
-          } catch {
-            return m.content;
-          }
+          try { return decryptMessage(m.content, selectedChat.aesKey); }
+          catch { return m.content; }
         })(),
       }));
 
@@ -112,7 +157,7 @@ const MessagesPage = ({ myId, newChat }) => {
     fetchMessages();
   }, [selectedChat]);
 
-  // 3️⃣ Realtime subscription
+  // ---- Realtime subscription for messages ----
   useEffect(() => {
     if (!selectedChat) return;
 
@@ -129,20 +174,16 @@ const MessagesPage = ({ myId, newChat }) => {
         (payload) => {
           const m = payload.new;
           let content = m.content;
-          try {
-            content = decryptMessage(m.content, selectedChat.aesKey);
-          } catch {}
-          setMessages((prev) => [...prev, { ...m, content }]);
+          try { content = decryptMessage(m.content, selectedChat.aesKey); } catch {}
+          setMessages(prev => [...prev, { ...m, content }]);
         }
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [selectedChat]);
 
-  // 4️⃣ Typing indicator
+  // ---- Typing indicator ----
   useEffect(() => {
     if (!selectedChat) return;
 
@@ -159,12 +200,9 @@ const MessagesPage = ({ myId, newChat }) => {
         (payload) => {
           const typing = payload.new;
           if (typing.user_id !== myId && typing.is_typing) {
-            setTypingUsers((prev) => [...new Set([...prev, typing.user_id])]);
+            setTypingUsers(prev => [...new Set([...prev, typing.user_id])]);
             setTimeout(
-              () =>
-                setTypingUsers((prev) =>
-                  prev.filter((id) => id !== typing.user_id)
-                ),
+              () => setTypingUsers(prev => prev.filter(id => id !== typing.user_id)),
               2000
             );
           }
@@ -172,31 +210,26 @@ const MessagesPage = ({ myId, newChat }) => {
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [selectedChat]);
 
-  // 5️⃣ Send message
+  // ---- Send message ----
   const sendMessage = async () => {
     if (!input.trim() || !selectedChat) return;
-
     const encrypted = encryptMessage(input, selectedChat.aesKey);
     await supabase.from("messages").insert({
       chat_id: selectedChat.chatId,
       sender_id: myId,
       content: encrypted,
     });
-
     setInput("");
     setTimeout(() => scrollToBottom(true), 50);
   };
 
-  // 6️⃣ Handle typing
+  // ---- Handle typing ----
   const handleTyping = async (text) => {
     setInput(text);
     if (!selectedChat) return;
-
     await supabase
       .from("chat_participants")
       .update({ is_typing: true })
@@ -212,7 +245,7 @@ const MessagesPage = ({ myId, newChat }) => {
     }, 2000);
   };
 
-  // 7️⃣ Auto-scroll when messages change
+  // ---- Auto-scroll when messages change ----
   useEffect(() => {
     const prevLen = prevMessagesLenRef.current;
     const newLen = messages.length;
@@ -226,13 +259,13 @@ const MessagesPage = ({ myId, newChat }) => {
       if (isUserAtBottomRef.current) {
         scrollToBottom(true);
       } else {
-        setNewMessagesCount((c) => c + (newLen - prevLen));
+        setNewMessagesCount(c => c + (newLen - prevLen));
       }
     }
     prevMessagesLenRef.current = newLen;
   }, [messages, selectedChat]);
 
-  // Attach scroll listener
+  // ---- Attach scroll listener ----
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
@@ -245,11 +278,11 @@ const MessagesPage = ({ myId, newChat }) => {
     <div className="h-[calc(100vh-4rem)] flex">
       {/* Sidebar */}
       <aside className="w-1/4 border-r border-secondary/50 flex flex-col">
-        <div className="p-4 font-mono text-secondary border-b border-secondary/50 items-center">
+        <div className="p-4 font-mono text-secondary border-b border-secondary/50">
           CHATS
         </div>
         <div className="flex-1 overflow-y-auto">
-          {chats.map((chat) => (
+          {chats.map(chat => (
             <div
               key={chat.chatId}
               className={`p-4 font-mono cursor-pointer border-b border-secondary/30 hover:bg-secondary/10 ${
@@ -268,25 +301,23 @@ const MessagesPage = ({ myId, newChat }) => {
 
       {/* Chat panel */}
       <section className="flex-1 flex flex-col">
-        {/* Header */}
         <header className="p-4 border-b border-secondary/50 flex items-center">
-  {selectedChat ? (
-    <h2 className="text-primary font-mono text-base font-normal">
-      {selectedChat.participantName}
-      {selectedChat.operatorId && (
-        <span className="text-secondary text-sm ml-2 font-light">
-          ({selectedChat.operatorId})
-        </span>
-      )}
-    </h2>
-  ) : (
-    <h2 className="text-primary font-mono text-base font-normal">No chat selected</h2>
-  )}
-</header>
+          {selectedChat ? (
+            <h2 className="text-primary font-mono text-base font-normal">
+              {selectedChat.participantName}
+              {selectedChat.operatorId && (
+                <span className="text-secondary text-sm ml-2 font-light">
+                  ({selectedChat.operatorId})
+                </span>
+              )}
+            </h2>
+          ) : (
+            <h2 className="text-primary font-mono text-base font-normal">
+              No chat selected
+            </h2>
+          )}
+        </header>
 
-
-
-        {/* Messages container */}
         <div className="flex-1 relative bg-background">
           <div
             ref={messagesContainerRef}
@@ -305,8 +336,8 @@ const MessagesPage = ({ myId, newChat }) => {
                 <div
                   className={`max-w-[70%] px-3 py-2 rounded-lg font-mono text-sm ${
                     msg.sender_id === myId
-                    ? "bg-gray-300 text-black dark:bg-gray-500 dark:text-white rounded-bl-none" // ✅ My messages
-                    : "bg-gray-400 text-black dark:bg-gray-700 dark:text-white rounded-bl-none" // ✅ Received messages
+                      ? "bg-gray-300 text-black dark:bg-gray-500 dark:text-white rounded-bl-none"
+                      : "bg-gray-400 text-black dark:bg-gray-700 dark:text-white rounded-bl-none"
                   }`}
                 >
                   {msg.content}
@@ -323,7 +354,6 @@ const MessagesPage = ({ myId, newChat }) => {
             ))}
           </div>
 
-          {/* Jump button */}
           {newMessagesCount > 0 && (
             <button
               onClick={() => scrollToBottom(true)}
@@ -334,12 +364,19 @@ const MessagesPage = ({ myId, newChat }) => {
           )}
         </div>
 
-        {/* Typing */}
-        <div className="px-4 text-xs text-secondary italic h-4">
-          {typingUsers.length > 0 && "User is typing..."}
-        </div>
+        <div className="px-4 text-xs text-secondary italic h-4 flex items-center gap-1">
+  {typingUsers.length > 0 && (
+    <>
+      <span className="flex items-center">
+        <span className="dot dot--1" />
+        <span className="dot dot--2" />
+        <span className="dot dot--3" />
+      </span>
+    </>
+  )}
+</div>
 
-        {/* Input */}
+
         <div className="p-3 border-t border-secondary/50 flex gap-2">
           <textarea
             value={input}
@@ -357,8 +394,8 @@ const MessagesPage = ({ myId, newChat }) => {
           <button
             disabled={!input.trim()}
             onClick={sendMessage}
-            className="px-4 py-2 bg-primary text-black font-mono rounded-md disabled:opacity-50"
-          >
+            className="px-4 py-2 bg-primary text-white dark:text-black font-mono rounded-md disabled:opacity-50">
+        
             Send
           </button>
         </div>

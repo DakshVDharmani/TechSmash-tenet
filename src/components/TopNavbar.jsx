@@ -1,14 +1,14 @@
-// src/components/TopNavbar.jsx
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Link } from "react-router-dom";
-import { Sun, Moon, User, Search, Info } from "lucide-react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Sun, Moon, Search, Info } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { cn } from "../utils/cn";
 import { supabase } from "../supabaseClient";
-import CompactUserResult from "./CompactUserResult"; // ✅ use compact card
+import { createOrGetChat } from "../utils/chatUtils";
+import CompactUserResult from "./CompactUserResult";
 
-const TopNavbar = () => {
+const TopNavbar = ({ onNewChat }) => {
   const { isDark, toggleTheme } = useTheme();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
@@ -21,13 +21,15 @@ const TopNavbar = () => {
   const [searchError, setSearchError] = useState(null);
 
   // PROFILE AVATAR STATE
-  const [pfpUrl, setPfpUrl] = useState(null); // resolved URL for <img>
+  const [pfpUrl, setPfpUrl] = useState(null);
   const [displayName, setDisplayName] = useState("Guest");
   const [pfpLoading, setPfpLoading] = useState(true);
 
   const dropdownRef = useRef(null);
   const aboutRef = useRef(null);
   const searchRef = useRef(null);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   // click outside handling
   useEffect(() => {
@@ -54,11 +56,7 @@ const TopNavbar = () => {
     const fetchPfp = async () => {
       setPfpLoading(true);
       try {
-        // get current auth user
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
+        const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
           if (mounted) {
             setDisplayName("Guest");
@@ -68,7 +66,6 @@ const TopNavbar = () => {
           return;
         }
 
-        // set display name from metadata (fallback to email)
         const name =
           user.user_metadata?.full_name ||
           user.user_metadata?.name ||
@@ -76,9 +73,8 @@ const TopNavbar = () => {
           "User";
         if (mounted) setDisplayName(name);
 
-        // fetch pfp from Profiles table where id === user.id
         const { data: profile, error } = await supabase
-          .from("Profiles") // table name as used elsewhere
+          .from("Profiles")
           .select("pfp")
           .eq("id", user.id)
           .maybeSingle();
@@ -95,7 +91,6 @@ const TopNavbar = () => {
         const pfp = profile?.pfp ?? null;
 
         if (!pfp) {
-          // no pfp set
           if (mounted) {
             setPfpUrl(null);
             setPfpLoading(false);
@@ -103,7 +98,6 @@ const TopNavbar = () => {
           return;
         }
 
-        // If pfp is a full URL, use it
         if (/^https?:\/\//i.test(pfp)) {
           if (mounted) {
             setPfpUrl(pfp);
@@ -112,16 +106,10 @@ const TopNavbar = () => {
           return;
         }
 
-        // Otherwise assume pfp is a storage path in Supabase Storage bucket.
-        // Default bucket name is 'avatars' — change if your bucket is named differently.
-        const BUCKET = "avatars"; // <-- change this to your actual bucket name if needed
-
-        // Try to get a public URL first
+        const BUCKET = "avatars";
         try {
-          const { data: publicData, error: publicError } =
+          const { data: publicData } =
             supabase.storage.from(BUCKET).getPublicUrl(pfp);
-
-          // Depending on supabase-js version the structure may be { data: { publicUrl } }
           const publicUrl =
             publicData && (publicData.publicUrl || publicData.publicURL);
 
@@ -133,16 +121,10 @@ const TopNavbar = () => {
             return;
           }
 
-          // If public URL not available, attempt signed url (short lived)
-          const signedExpirySeconds = 60; // 60s signed url for preview
-          const {
-            data: signedData,
-            error: signErr,
-          } = await supabase.storage
+          const signedExpirySeconds = 60;
+          const { data: signedData } = await supabase.storage
             .from(BUCKET)
             .createSignedUrl(pfp, signedExpirySeconds);
-
-          // Depending on version: signedData.signedUrl or signedData.signedURL
           const signedUrl =
             signedData && (signedData.signedUrl || signedData.signedURL);
 
@@ -154,7 +136,6 @@ const TopNavbar = () => {
             return;
           }
 
-          // If neither method worked, fallback to null
           if (mounted) {
             setPfpUrl(null);
             setPfpLoading(false);
@@ -176,13 +157,12 @@ const TopNavbar = () => {
     };
 
     fetchPfp();
+    return () => { mounted = false; };
+  }, []);
 
-    return () => {
-      mounted = false;
-    };
-  }, []); // run once on mount; will pick up current signed in user
-
-  // search effect (debounced)
+  // ----------------------------
+  // SEARCH (debounced)
+  // ----------------------------
   useEffect(() => {
     const q = searchQuery?.trim();
 
@@ -201,16 +181,13 @@ const TopNavbar = () => {
       setNoResults(false);
 
       try {
-        // ✅ get current user id
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+        const { data: { user } } = await supabase.auth.getUser();
 
         const { data, error } = await supabase
           .from("Profiles")
           .select("id, fullname, operator_id, email")
           .ilike("fullname", `%${q}%`)
-          .neq("id", user?.id) // 🚫 exclude current user
+          .neq("id", user?.id)
           .limit(10);
 
         if (!mounted) return;
@@ -227,11 +204,7 @@ const TopNavbar = () => {
             id: p.id,
             name: p.fullname || "Unknown",
             role: p.operator_id || "Operator",
-            goal: p.current_goal || "No active goal",
-            alignmentScore: p.alignment_score ?? 0,
-            statusNote: p.status_note || "No notes",
             requested: false,
-            onConnectClick: () => alert(`Connect request sent to ${p.fullname}`),
             index: idx,
           }));
           setSearchResults(mapped);
@@ -259,6 +232,36 @@ const TopNavbar = () => {
     setSearchQuery("");
   };
 
+  // ----------------------------
+  // Start chat from CompactUserResult icon
+  // ----------------------------
+  const handleStartChat = async (userObj) => {
+    try {
+      const { data: { user: me } } = await supabase.auth.getUser();
+      if (!me) return;
+
+      const chatData = await createOrGetChat(me.id, userObj.id);
+
+      if (chatData && typeof onNewChat === "function") {
+        onNewChat({
+          chatId: chatData.chatId,
+          participantName: userObj.name,
+          aesKey: chatData.aesKey,
+          selectedChatId: chatData.chatId,    // MessagesPage will auto-select
+        });
+      }
+
+      if (location.pathname !== "/messages") {
+        navigate("/messages");
+      }
+
+      setSearchResults([]);
+      setSearchQuery("");
+    } catch (err) {
+      console.error("Start chat failed:", err);
+    }
+  };
+
   // helper to compute initial
   const initial = (displayName || "U").charAt(0).toUpperCase();
 
@@ -279,7 +282,7 @@ const TopNavbar = () => {
         </button>
         <AnimatePresence>
           {isAboutOpen && (
-            <motion.div
+           <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -364,15 +367,11 @@ const TopNavbar = () => {
               {!loading && !searchError && searchResults.length > 0 && (
                 <div>
                   {searchResults.map((userObj) => (
-                    <Link
+                    <CompactUserResult
                       key={userObj.id}
-                      to={`/profile/${userObj.id}`}
-                      onClick={handleSelectProfile}
-                      className="block no-underline"
-                      aria-label={`Open profile for ${userObj.name}`}
-                    >
-                      <CompactUserResult user={userObj} />
-                    </Link>
+                      user={userObj}
+                      onChatClick={() => handleStartChat(userObj)}
+                    />
                   ))}
                 </div>
               )}
@@ -402,22 +401,16 @@ const TopNavbar = () => {
             aria-label="Open user menu"
             title={displayName}
           >
-            {/* show image if pfpUrl available, otherwise fallback to initial */}
             {pfpLoading ? (
-              // skeleton circle while loading
               <div className="w-7 h-7 rounded-full bg-secondary/20 animate-pulse" />
             ) : pfpUrl ? (
               <img
                 src={pfpUrl}
                 alt={`${displayName} avatar`}
                 className="w-8 h-8 rounded-full object-cover"
-                onError={() => {
-                  // if image fails, fall back to initials
-                  setPfpUrl(null);
-                }}
+                onError={() => setPfpUrl(null)}
               />
             ) : (
-              // initials fallback
               <div className="w-8 h-8 rounded-full bg-primary-600 text-white flex items-center justify-center font-bold">
                 {initial}
               </div>

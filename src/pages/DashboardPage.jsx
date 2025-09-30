@@ -18,6 +18,13 @@ const DashboardPage = () => {
   const [statusType, setStatusType] = useState("info"); // "success" | "error" | "info"
   const fileInputRef = useRef(null);
 
+  const [clearanceLevel, setClearanceLevel] = useState(0);  // 🔹 NEW
+  const [systemStatus, setSystemStatus] = useState({
+    text: "NOMINAL",
+    color: "text-success",
+  });
+
+
   useEffect(() => {
     const fetchProfileData = async () => {
       try {
@@ -34,7 +41,7 @@ const DashboardPage = () => {
         // ✅ Fetch operator id and profile picture
         const { data, error } = await supabase
           .from("Profiles")
-          .select("operator_id, pfp")
+          .select("operator_id, pfp, clearance_level")
           .eq("id", user.id)
           .single();
 
@@ -44,6 +51,17 @@ const DashboardPage = () => {
         else setOperatorId("NO_ID");
 
         if (data?.pfp) setPfpUrl(data.pfp);
+
+        if (typeof data?.clearance_level === "number") {
+          setClearanceLevel(data.clearance_level);
+        
+          // 🔹 Decide status based on clearance level
+          if (data.clearance_level >= 5) {
+            setSystemStatus({ text: "NOMINAL", color: "text-success" });
+          } else {
+            setSystemStatus({ text: "CRITICAL", color: "text-alert" }); // or any opposite word you prefer
+          }
+        }
 
         // ✅ ---- Fetch data from Extensions ----
         const { data: extData, error: extError } = await supabase
@@ -159,8 +177,9 @@ const DashboardPage = () => {
         <div>
           <h1 className="font-mono text-3xl text-primary">OPERATOR_DASHBOARD</h1>
           <p className="text-secondary">
-            STATUS: <span className="text-success">NOMINAL</span>
+            STATUS: <span className={systemStatus.color}>{systemStatus.text}</span>
           </p>
+
         </div>
         <div className="font-mono text-right text-sm">
           <p className="text-secondary">
@@ -213,7 +232,7 @@ const DashboardPage = () => {
               ? `OPERATOR_${operatorId}`
               : "LOADING..."}
           </h2>
-          <p className="text-secondary text-sm">Clearance Level: 4</p>
+          <p className="text-secondary text-sm">Clearance Level: {clearanceLevel}</p>
 
           {/* Status message */}
           {statusMsg && (
@@ -246,7 +265,7 @@ const DashboardPage = () => {
                 to="/goals"
                 className="block font-mono text-primary border border-secondary p-3 text-center rounded-md transition-all hover:border-primary hover:bg-primary/10 hover:shadow-md"
               >
-                [ ADD_GOAL ]
+                [ INSERT_TASKS ]
               </Link>
             </motion.div>
             <motion.div whileHover={{ scale: 1.05 }}>
@@ -267,7 +286,7 @@ const DashboardPage = () => {
             </motion.div>
             <motion.div whileHover={{ scale: 1.05 }}>
               <Link
-                to="/identity"
+                to="/avatar"
                 className="block font-mono text-primary border border-secondary p-3 text-center rounded-md transition-all hover:border-primary hover:bg-primary/10 hover:shadow-md"
               >
                 [ PRO_PROFILES ]

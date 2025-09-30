@@ -19,7 +19,8 @@ import NullPage from './pages/NullPage';
 import FuturePage from './pages/FuturePage';
 import PeersPage from './pages/PeersPage';
 import PastPage from './pages/PastPage';
-import SupervisorPage from './pages/SupervisorPage'
+import SupervisorPage from './pages/SupervisorPage'; 
+import FocusMonitorPage from './pages/FocusMonitorPage';
 
 import TopNavbar from './components/TopNavbar';
 import Navigation from './components/Navigation';
@@ -92,6 +93,7 @@ function App() {
               <Route path="/timeline" element={<TimelinePage />} />
               <Route path="/avatar" element={<AvatarPage />} />
               <Route path="/supervisor" element={<SupervisorPage/>} />
+              <Route path="/FocusMonitor" element={<FocusMonitorPage/>} />
 
               {/* ✅ MessagesPage now gets myId and newChat */}
               <Route

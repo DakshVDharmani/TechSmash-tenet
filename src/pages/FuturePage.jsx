@@ -1,32 +1,37 @@
 import { useEffect, useState } from "react";
-import UserCard from "../components/UserCard";
+import SemanticMatchCard from "../components/SemanticMatchCard"; // ✅ same card as PeersPage
 import { supabase } from "../supabaseClient";
 import { createOrGetChat } from "../utils/chatUtils";
+import { Info } from 'lucide-react';
 
-const FuturePage = ({ onNewChat }) => {
-  const [users, setUsers] = useState([]);
+const PEER_MARGIN = 15; // ±15% band counts as “peer”
+
+export default function FuturePage({ onNewChat }) {
+  const [matches, setMatches] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // load auth user id once
+  // 1️⃣  Get logged-in user id
   useEffect(() => {
-    const getCurrentUser = async () => {
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (error) return console.error("Auth error:", error);
-        setCurrentUserId(data?.user?.id ?? null);
-      } catch (err) {
-        console.error("getCurrentUser error:", err);
+    (async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) {
+        console.error("Auth error:", error);
+        return;
       }
-    };
-    getCurrentUser();
-  }, []); // runs once
+      setCurrentUserId(data?.user?.id ?? null);
+    })();
+  }, []);
 
-  // shared connect handler (optimistic)
+  // 2️⃣  Create / open chat
   const handleConnect = async (targetUserId, participantName) => {
     if (!currentUserId || !targetUserId) return;
 
-    // prevent double clicks via state
-    setUsers(prev => prev.map(u => u.id === targetUserId ? { ...u, requested: true } : u));
+    setMatches(prev =>
+      prev.map(m =>
+        m.peer_id === targetUserId ? { ...m, requested: true } : m
+      )
+    );
 
     try {
       const chatData = await createOrGetChat(currentUserId, targetUserId);
@@ -39,78 +44,119 @@ const FuturePage = ({ onNewChat }) => {
       }
     } catch (err) {
       console.error("createOrGetChat error:", err);
-      // revert optimistic
-      setUsers(prev => prev.map(u => u.id === targetUserId ? { ...u, requested: false } : u));
+      setMatches(prev =>
+        prev.map(m =>
+          m.peer_id === targetUserId ? { ...m, requested: false } : m
+        )
+      );
     }
   };
 
-  // fetch future users when currentUserId is available
+  // 3️⃣  Fetch semantic matches + peers' progress, then show only FUTURE
   useEffect(() => {
     if (!currentUserId) return;
 
-    const fetchUsers = async () => {
+    const fetchFuture = async () => {
+      setLoading(true);
       try {
-        const { data: myData, error: myErr } = await supabase
+        // --- my overall progress
+        const { data: myRow, error: myErr } = await supabase
           .from("overall_progress")
           .select("overall_progress")
           .eq("id", currentUserId)
           .single();
         if (myErr) throw myErr;
-        const myProgress = myData?.overall_progress ?? 0;
+        const myProgress = myRow?.overall_progress ?? 0;
 
-        const { data: allProfiles, error: profilesError } = await supabase
-          .from("Profiles")
-          .select(`
-            id,
-            fullname,
-            overall_progress:overall_progress!inner(overall_progress),
-            objectives!left(user_id, title, progress, status)
-          `)
-          .neq("id", currentUserId);
+        // --- semantic similarity rows (for similarity + names)
+        const { data: semanticRows, error: rpcErr } = await supabase.rpc(
+          "match_goals_to_roadmaps",
+          { p_user_id: currentUserId }
+        );
+        if (rpcErr) throw rpcErr;
 
-        if (profilesError) throw profilesError;
+        // unique peer ids
+        const peerIds = [...new Set((semanticRows || []).map(r => r.peer_id))];
+        if (peerIds.length === 0) {
+          setMatches([]);
+          setLoading(false);
+          return;
+        }
 
-        const futureUsers = (allProfiles || [])
-          .filter(u => (u.overall_progress?.overall_progress ?? 0) > myProgress + 5)
-          .map(u => {
-            const topGoal = Array.isArray(u.objectives)
-              ? u.objectives.sort((a, b) => b.progress - a.progress)[0]
-              : null;
+        // --- get peers' overall progress
+        const { data: progressRows, error: progErr } = await supabase
+          .from("overall_progress")
+          .select("id, overall_progress")
+          .in("id", peerIds);
+        if (progErr) throw progErr;
 
-            return {
-              id: u.id,
-              name: u.fullname || "Unknown",
-              role: "MENTOR",
-              goal: topGoal?.title || "No active goal",
-              statusNote: topGoal?.status || "No notes",
-              alignmentScore: u.overall_progress?.overall_progress ?? 0,
-              requested: false,
-              onConnectClick: () => handleConnect(u.id, u.fullname || "Unknown")
-            };
-          });
+        const progressMap = {};
+        (progressRows || []).forEach(r => {
+          progressMap[r.id] = r.overall_progress ?? 0;
+        });
 
-        setUsers(futureUsers);
+        // --- build final list and classify
+        const final = (semanticRows || []).map(p => {
+          const peerProg = progressMap[p.peer_id] ?? 0;
+
+          let category = "PEER";
+          if (peerProg > myProgress + PEER_MARGIN) category = "FUTURE";
+          else if (peerProg < myProgress - PEER_MARGIN) category = "PAST";
+
+          return {
+            peer_id: p.peer_id,
+            peer_name: p.peer_name || "Unknown",
+            roadmap_title: p.roadmap_title,
+            similarity: Number(p.similarity) || 0,
+            overall_progress: peerProg, // ✅ alignment score
+            time_category: category,
+            requested: false
+          };
+        });
+
+        // 🔹 Only show FUTURE connections on this page
+        setMatches(final.filter(m => m.time_category === "FUTURE"));
       } catch (err) {
-        console.error("fetchUsers error:", err);
+        console.error("FuturePage semantic match error:", err);
+        setMatches([]);
+      } finally {
+        setLoading(false);
       }
     };
 
-    fetchUsers();
-  }, [currentUserId]); // stable literal array (1 element)
+    fetchFuture();
+  }, [currentUserId]);
 
+  // 4️⃣  UI
   return (
     <div className="min-h-screen p-8 md:p-12">
-      <h1 className="font-mono text-3xl text-primary mb-8">FUTURE_CONNECTIONS</h1>
-      <h2 className="font-mono text-lg text-secondary mb-6">
-        These are mentors ahead of you — individuals whose goals and alignment are further along.
-      </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {users.map((user, i) => (
-          <UserCard key={user.id} user={user} index={i} />
-        ))}
+      <h1 className="font-mono text-3xl text-primary mb-4">
+        FUTURE_CONNECTIONS
+      </h1>
+       <div className="flex items-center gap-3 text-secondary mb-6 w-full">
+        <Info className="w-6 h-6 text-primary" />
+        <p className="font-mono text-primary text-sm leading-snug flex-1">
+        FUTURE / PRESENT / PAST are determined only from the
+        User's overall progress. Semantic similarity is
+        shown for each match.
+      </p>
       </div>
+
+      {loading ? (
+        <p className="font-mono text-secondary">
+          Loading future connections…
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          {matches.map((m, i) => (
+            <SemanticMatchCard
+              key={`${m.peer_id ?? "future"}-${i}`}
+              match={m}
+              onConnect={handleConnect}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
-};
-
-export default FuturePage;
+}

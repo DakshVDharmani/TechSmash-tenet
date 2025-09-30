@@ -152,7 +152,7 @@ const SettingsPage = () => {
               >
                 <motion.div
                   className="w-[clamp(12px,2vw,16px)] h-[clamp(12px,2vw,16px)] bg-secondary group-hover:bg-primary transition-colors"
-                  animate={{ x: isDark ? 0 : "clamp(24px,4vw,40px)" }}
+                  animate={{ x: isDark ? 0 : "clamp(22px,4vw,34px)" }}
                   transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                 />
               </button>

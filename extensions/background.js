@@ -6,15 +6,26 @@ const DOMAIN_CACHE_TTL_MS = 15 * 1000;
 
 let envConfig = { supabaseUrl: "", supabaseKey: "" };
 let currentUser = null;
+// accum[goal_id][domain] = seconds
 let accum = {};
 let lastPushAt = 0;
 let domainCache = { ts: 0, allowed: [], rejected: [], rows: [] };
+let goalRows = [];            // cache of Extensions rows
+let lastRowsRefresh = 0;
 
 let softBlockState = {
   remainingSecs: 0,
   timer: null,
   isPaused: false
 };
+
+// --- NEW for local-day reset ---
+function getLocalToday() {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return new Date().toLocaleDateString('en-CA', { timeZone: tz });
+}
+let currentLocalDate = getLocalToday();
+
 
 async function startSoftBlock(timeoutMins, options = { preserve: false }) {
   console.log(`${safeLogPrefix()} Starting soft block, preserve: ${options.preserve}, remaining: ${softBlockState.remainingSecs}s`);
@@ -234,20 +245,32 @@ function normalizeDomainFromUrl(url) {
 function parseDomainsField(raw) {
   let domains = [];
   if (!raw) return domains;
+
   if (Array.isArray(raw)) {
     domains = raw.map(d => String(d).trim());
   } else if (typeof raw === "string") {
     const trimmed = raw.trim();
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+
+    // 🔑 Handle Postgres text[] like {instagram.com,youtube.com}
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      domains = trimmed
+        .slice(1, -1)                // remove outer { }
+        .split(",")
+        .map(d => d.trim().replace(/^"|"$/g, "")) // strip optional quotes
+        .filter(Boolean);
+    } else if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      // also handle JSON array format
       try {
         const parsed = JSON.parse(trimmed);
         if (Array.isArray(parsed)) domains = parsed.map(d => String(d).trim());
-      } catch (e) {}
+      } catch {}
     }
+
     if (!domains.length) {
       domains = raw.split(",").map(d => d.trim()).filter(Boolean);
     }
   }
+
   return domains.map(d => {
     let domain = d.toLowerCase().replace(/^www\./, "");
     if (!domain.includes(".")) domain += ".com";
@@ -435,6 +458,51 @@ async function fetchExtensionsRows() {
   }
 }
 
+// --- helper: reset a single Extensions row if its stored date != local date ---
+async function resetRowIfOld(row) {
+     const today = getLocalToday();
+     // row.date might be returned as "YYYY-MM-DD"
+     const rowDate = row.date ? row.date.slice(0, 10) : null;
+     if (rowDate !== today) {
+       console.log(`${safeLogPrefix()} 🔄 Resetting row ${row.id} (stored date ${rowDate}) → ${today}`);
+       const url = `${envConfig.supabaseUrl}/rest/v1/Extensions?id=eq.${encodeURIComponent(row.id)}`;
+       const headers = {
+         apikey: envConfig.supabaseKey,
+         Authorization: `Bearer ${currentUser.access_token}`,
+         "Content-Type": "application/json",
+       };
+       const payload = {
+         focused_time: 0,
+         distracted_time: 0,
+         deviation_warning: 0,
+         date: today
+       };
+       const resp = await fetch(url, { method: "PATCH", headers, body: JSON.stringify(payload) });
+       if (!resp.ok) {
+         const txt = await resp.text();
+         console.warn(`${safeLogPrefix()} ⚠️ Failed to reset row ${row.id}: ${resp.status} ${txt}`);
+       }
+     }
+  }
+  
+
+// --- NEW: reset all Extension rows for the new local day ---
+async function resetExtensionsForNewDay() {
+  try {
+    // Fetch the current Extensions rows for this profile
+     const rows = await fetchExtensionsRows();
+     if (!rows.length) return;
+ 
+     // For each row, compare its `date` column to today's local date
+     // and reset timers if it is an old date.
+     for (const row of rows) {
+       await resetRowIfOld(row);
+     }
+  } catch (e) {
+    console.error(`${safeLogPrefix()} ❌ resetExtensionsForNewDay error:`, e);
+  }
+}
+
 async function fetchAndCacheDomains() {
   const now = Date.now();
   if (now - domainCache.ts < DOMAIN_CACHE_TTL_MS && domainCache.rows.length) return domainCache;
@@ -490,12 +558,30 @@ async function checkAndBlock(tabId, url, force = false) {
     const settings = await fetchSettings();
     if (!settings) return;
   
-    if (settings.hard_block || force) {
-      console.warn(`${safeLogPrefix()} HARD BLOCK → closing ${domain}`);
-      try { chrome.tabs.remove(tabId); } catch {}
-      delete accum[domain];
-      return;
+if (settings.hard_block || force) {
+  console.warn(`${safeLogPrefix()} HARD BLOCK → closing ${domain} and focusing Supervisor page`);
+chrome.tabs.remove(tabId, () => {
+  // Look for any tab that is already showing your site (any page)
+  chrome.tabs.query({ url: "http://localhost:5173/*" }, (tabs) => {
+    if (tabs.length > 0) {
+      // If a tab is already open on your site, navigate it to SupervisorPage
+      const tab = tabs[0];
+      chrome.tabs.update(tab.id, { 
+        url: "http://localhost:5173/supervisor", // force it to this page
+        active: true
+      });
+      chrome.windows.update(tab.windowId, { focused: true });
+    } else {
+      // If no tab from your site is open, open a brand new tab at SupervisorPage
+      chrome.tabs.create({ url: "http://localhost:5173/supervisor" });
     }
+  });
+});
+
+  delete accum[domain];
+  return;
+}
+
   
     if (settings.soft_block) {
       if (softBlockState.remainingSecs <= 0 || !softBlockState.timer) {
@@ -515,12 +601,30 @@ async function checkAndBlock(tabId, url, force = false) {
     }
 
     const showOverlay = await fetchOverlaySetting();
-    if (!showOverlay) {
-      console.warn(`${safeLogPrefix()} overlay disabled → closing ${domain}`);
-      try { chrome.tabs.remove(tabId); } catch {}
-      delete accum[domain];
-      return;
+if (!showOverlay) {
+  console.warn(`${safeLogPrefix()} overlay disabled → closing ${domain} and focusing Supervisor page`);
+chrome.tabs.remove(tabId, () => {
+  // Look for any tab that is already showing your site (any page)
+  chrome.tabs.query({ url: "http://localhost:5173/*" }, (tabs) => {
+    if (tabs.length > 0) {
+      // If a tab is already open on your site, navigate it to SupervisorPage
+      const tab = tabs[0];
+      chrome.tabs.update(tab.id, { 
+        url: "http://localhost:5173/supervisor", // force it to this page
+        active: true
+      });
+      chrome.windows.update(tab.windowId, { focused: true });
+    } else {
+      // If no tab from your site is open, open a brand new tab at SupervisorPage
+      chrome.tabs.create({ url: "http://localhost:5173/supervisor" });
     }
+  });
+});
+
+  delete accum[domain];
+  return;
+}
+
 
     console.warn(`${safeLogPrefix()} blocking ${domain} with overlay`);
     try {
@@ -556,13 +660,30 @@ async function checkAndBlock(tabId, url, force = false) {
         },
         args: [chrome.runtime.getURL("assets/default-video.mp4")],
       });
-    } catch (e) {
-      console.error(`${safeLogPrefix()} scripting.executeScript error:`, e);
-      try { chrome.tabs.remove(tabId); } catch {}
+} catch (e) {
+  console.error(`${safeLogPrefix()} scripting.executeScript error:`, e);
+chrome.tabs.remove(tabId, () => {
+  // Look for any tab that is already showing your site (any page)
+  chrome.tabs.query({ url: "http://localhost:5173/*" }, (tabs) => {
+    if (tabs.length > 0) {
+      // If a tab is already open on your site, navigate it to SupervisorPage
+      const tab = tabs[0];
+      chrome.tabs.update(tab.id, { 
+        url: "http://localhost:5173/supervisor", // force it to this page
+        active: true
+      });
+      chrome.windows.update(tab.windowId, { focused: true });
+    } else {
+      // If no tab from your site is open, open a brand new tab at SupervisorPage
+      chrome.tabs.create({ url: "http://localhost:5173/supervisor" });
     }
-    delete accum[domain];
-    return;
-  }
+  });
+});
+
+}
+
+      delete accum[domain];
+      return;}
 
   if (isAllowed || !rejected.some(p => isDomainMatch(domain, p))) {
     pauseSoftBlock();
@@ -583,65 +704,109 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
   });
 });
 
-function tickAccum() {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (!tabs[0]?.url) return;
-    const domain = normalizeDomainFromUrl(tabs[0].url);
-    if (!domain) return;
-    accum[domain] = (accum[domain] || 0) + 1;
-  });
+async function tickAccum() {
+  const now = Date.now();
 
-  if (Date.now() - lastPushAt >= PUSH_INTERVAL_MS) {
+  if (now - lastRowsRefresh > 30_000) {
+    goalRows = await fetchExtensionsRows();
+    lastRowsRefresh = now;
+  }
+
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tabs[0]?.url) return;
+
+  const domain = normalizeDomainFromUrl(tabs[0].url);
+  if (!domain) return;
+
+// accum[goal_id][domain] = seconds
+if (!accum) accum = {};
+
+for (const row of goalRows) {               // goalRows already refreshed every 30 s
+  const gid = row.goal_id;
+  if (!accum[gid]) accum[gid] = {};
+  const d = normalizeDomainFromUrl(tabs[0].url);
+  if (!d) continue;
+  accum[gid][d] = (accum[gid][d] || 0) + 1;
+}
+
+
+  if (now - lastPushAt >= PUSH_INTERVAL_MS) {
     pushToSupabase();
-    lastPushAt = Date.now();
+    lastPushAt = now;
   }
 }
+
 setInterval(tickAccum, 1000);
+// --- NEW: check every minute if local date rolled over ---
+setInterval(() => {
+  // Check database rows once a minute and reset any whose stored date is old
+  resetExtensionsForNewDay();
+}, 60 * 1000);
 
 async function pushToSupabase() {
   if (!currentUser?.access_token) {
     console.log(`${safeLogPrefix()} pushToSupabase: no session, skipping`);
     return;
   }
+
+  // 1️⃣ Get all Extensions rows for this profile
   const rows = await fetchExtensionsRows();
   if (!rows.length) {
     console.log(`${safeLogPrefix()} pushToSupabase: no Extensions rows, skipping`);
     return;
   }
 
-  const { allowed } = await fetchAndCacheDomains();
-  let focused = 0, distracted = 0;
-  for (const domain in accum) {
-    const secs = accum[domain];
-    if (allowed.some(p => isDomainMatch(domain, p))) focused += secs;
-    else distracted += secs;
-  }
-
+  // --- NEW: we now have accum per goal ---
   for (const row of rows) {
-    const payload = {
-      focused_time: (row.focused_time || 0) + focused,
-      distracted_time: (row.distracted_time || 0) + distracted,
+    const gid = row.goal_id;
+    const allowedList  = parseDomainsField(row.allowed_domains);
+    const rejectedList = parseDomainsField(row.rejected_domains);
+  
+    let focusedForRow    = 0;
+    let distractedForRow = 0;
+  
+    const perGoal = accum[gid] || {};
+
+    for (const domain in perGoal) {
+      const secs = perGoal[domain];
+
+      console.log('Goal', gid,
+        'allowedList', allowedList,
+        'rejectedList', rejectedList);
+      
+      
+      if (allowedList.some(p => isDomainMatch(domain, p)))  focusedForRow    += secs;
+      if (rejectedList.some(p => isDomainMatch(domain, p))) distractedForRow += secs;
+    } 
+
+  const payload = {
+    focused_time:    (row.focused_time    || 0) + focusedForRow,
+    distracted_time: (row.distracted_time || 0) + distractedForRow,
+  };
+
+  try {
+    const url = `${envConfig.supabaseUrl}/rest/v1/Extensions?id=eq.${encodeURIComponent(row.id)}&goal_id=eq.${encodeURIComponent(row.goal_id)}`;
+    const headers = {
+      apikey: envConfig.supabaseKey,
+      Authorization: `Bearer ${currentUser.access_token}`,
+      "Content-Type": "application/json",
     };
-    try {
-      const url = `${envConfig.supabaseUrl}/rest/v1/Extensions?id=eq.${encodeURIComponent(row.id)}`;
-      const headers = {
-        apikey: envConfig.supabaseKey,
-        Authorization: `Bearer ${currentUser.access_token}`,
-        "Content-Type": "application/json",
-      };
-      const resp = await fetch(url, { method: "PATCH", headers, body: JSON.stringify(payload) });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        console.warn(`${safeLogPrefix()} PATCH Extensions returned ${res.status}: ${txt}`);
-      } else {
-        console.log(`${safeLogPrefix()} Updated Extensions row: ${row.id}`, payload);
-      }
-    } catch (e) {
-      console.error(`${safeLogPrefix()} pushToSupabase error:`, e);
+    const resp = await fetch(url, { method: "PATCH", headers, body: JSON.stringify(payload) });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.warn(`${safeLogPrefix()} PATCH Extensions returned ${resp.status}: ${txt}`);
+    } else {
+      console.log(`${safeLogPrefix()} Updated Extensions row: ${row.id}`, payload);
     }
+  } catch (e) {
+    console.error(`${safeLogPrefix()} pushToSupabase error:`, e);
   }
-  accum = {};
 }
+
+// 🔹 Clear the accumulator only after processing every goal
+accum = {};
+}
+
 
 function testDomainBlocking(testUrl) {
   const domain = normalizeDomainFromUrl(testUrl);
