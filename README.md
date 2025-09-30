@@ -121,7 +121,19 @@ AI Context Understanding – Smarter activity classification from browsing & app
 
 🎥 Demo Video
 
-🔗 [Add your YouTube/Drive demo link here]
+https://drive.google.com/drive/folders/1CaahWsUuY1v-o89v5LYheh005Ot8j8xe?dmr=1&ec=wgc-drive-hero-goto
+
+Screenshots - 
+<img width="1919" height="913" alt="image" src="https://github.com/user-attachments/assets/98b3d0ad-12f3-4731-8d22-7b7b9a1d3e7e" />
+<img width="1919" height="918" alt="image" src="https://github.com/user-attachments/assets/5d24201f-1a2e-4453-bba7-d12c53b9ffbb" />
+<img width="1919" height="917" alt="image" src="https://github.com/user-attachments/assets/b239473c-b2f8-4071-ae9c-f0ed0e32acd8" />
+<img width="127" height="129" alt="image" src="https://github.com/user-attachments/assets/9cd3ea1d-4589-4be2-8282-d9ad2d062b08" />
+<img width="1908" height="1079" alt="image" src="https://github.com/user-attachments/assets/a520997d-505c-40b1-ad4e-2f5a721f6585" />
+<img width="1919" height="916" alt="image" src="https://github.com/user-attachments/assets/2d370930-6633-4a41-8a86-86c105cf6107" />
+<img width="1917" height="928" alt="image" src="https://github.com/user-attachments/assets/0ea43612-f5fd-4d38-8ffa-d4bd35248997" />
+
+
+
 
 🙌 Team Nexora – AISSMS TENET Hackathon 2025
 
